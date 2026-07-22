@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+
+# Data — datasets are large and often under restrictive licenses; never commit
+data/
+outputs/
+*.ckpt
+*.pth
+
+# OS
+Thumbs.db
+.DS_Store
