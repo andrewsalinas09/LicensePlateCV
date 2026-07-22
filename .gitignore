@@ -16,7 +16,9 @@ dist/
 .vscode/
 
 # Data — datasets are large and often under restrictive licenses; never commit
-data/
+# (but do track acquisition/build scripts living alongside them)
+data/*
+!data/*.py
 outputs/
 *.ckpt
 *.pth
