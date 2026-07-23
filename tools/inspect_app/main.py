@@ -20,13 +20,16 @@ from PySide6.QtGui import QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QGraphicsPixmapItem,
     QGraphicsScene, QGraphicsView, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QScrollArea, QSlider, QSpinBox, QStatusBar, QVBoxLayout, QWidget,
+    QMainWindow, QPushButton, QScrollArea, QSlider, QSpinBox, QStatusBar,
+    QTabWidget, QVBoxLayout, QWidget,
 )
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from lrlpr.camera import build_full_pipeline  # noqa: E402
+from lrlpr.decode import ScoringModel, slot_tables  # noqa: E402
 from lrlpr.pipeline import ParamSpec, Pipeline  # noqa: E402
+from lrlpr.plate_spec import SPECS  # noqa: E402
 
 FALLBACK_FONTS = [
     os.path.join(os.path.dirname(__file__), "..", "..", "data", "fonts",
@@ -83,6 +86,63 @@ def tile_ensemble(arrays: list[np.ndarray], cols: int = 3) -> np.ndarray:
     return grid
 
 
+def _text_pixmap(lines: list[tuple[str, tuple[int, int, int]]], scale: int = 2) -> QImage:
+    """Render colored monospace lines to a QImage (no external deps)."""
+    from PySide6.QtGui import QColor, QFont
+
+    cw, ch = 11 * scale, 20 * scale
+    width = cw * max((len(t) for t, _ in lines), default=1) + 12
+    height = ch * len(lines) + 12
+    img = QImage(width, height, QImage.Format_RGB888)
+    img.fill(QColor(18, 18, 18))
+    p = QPainter(img)
+    f = QFont("Consolas")
+    f.setPixelSize(int(15 * scale))
+    p.setFont(f)
+    for i, (text, rgb) in enumerate(lines):
+        p.setPen(QColor(*rgb))
+        p.drawText(6, 6 + ch * (i + 1) - 4 * scale, text)
+    p.end()
+    return img
+
+
+def decode_heatmap(tables, truth: str) -> QImage:
+    """Per-slot posterior heatmap: rows=slots, cells=alphabet, brightness=prob.
+
+    Truth cell outlined green; decoded-argmax cell outlined red when wrong.
+    """
+    from PySide6.QtGui import QColor
+
+    n = len(tables)
+    max_alpha = max(len(t.scores) for t in tables)
+    cell = 26
+    W, H = max_alpha * cell + 60, n * cell + 24
+    img = QImage(W, H, QImage.Format_RGB888)
+    img.fill(QColor(18, 18, 18))
+    p = QPainter(img)
+    from PySide6.QtGui import QFont
+    f = QFont("Consolas"); f.setPixelSize(14); p.setFont(f)
+    for j, t in enumerate(tables):
+        post = t.posterior()
+        chars = list(t.scores)
+        amax = t.argmax()
+        y = 4 + j * cell
+        p.setPen(QColor(200, 200, 200))
+        p.drawText(2, y + cell - 8, f"{j}")
+        for k, chv in enumerate(chars):
+            x = 24 + k * cell
+            v = int(40 + 215 * post[chv])
+            p.fillRect(x, y, cell - 2, cell - 2, QColor(v, v, v))
+            p.setPen(QColor(0, 0, 0) if v > 140 else QColor(210, 210, 210))
+            p.drawText(x + 6, y + cell - 8, chv)
+            if chv == truth[j]:
+                p.setPen(QColor(60, 220, 60)); p.drawRect(x, y, cell - 2, cell - 2)
+            if chv == amax and amax != truth[j]:
+                p.setPen(QColor(230, 60, 60)); p.drawRect(x, y, cell - 2, cell - 2)
+    p.end()
+    return img
+
+
 class Worker(QThread):
     """Serialized pipeline runner: always computes the latest requested config."""
 
@@ -117,6 +177,37 @@ class Worker(QThread):
                         state = dict(state)
                         state["__ensemble__"] = tile_ensemble(draws)
                 self.done.emit(state)
+            except Exception:
+                self.failed.emit(traceback.format_exc(limit=3))
+
+
+class DecodeWorker(QThread):
+    """Oracle-mode decode of the current frame: score every legal char per slot."""
+
+    done = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, pipeline: Pipeline):
+        super().__init__()
+        self.pipeline = pipeline
+        self._job = None
+
+    def request(self, overrides, spec_name, truth, a, b, seed):
+        self._job = (overrides, spec_name, truth, a, b, seed)
+        if not self.isRunning():
+            self.start()
+
+    def run(self):
+        while self._job is not None:
+            (overrides, spec_name, truth, a, b, seed), self._job = self._job, None
+            try:
+                spec = SPECS[spec_name]
+                truth = spec.validate_string(truth)
+                model = ScoringModel(self.pipeline, overrides, frozenset(), a, b)
+                y = model.observe(truth, seed)
+                tables = slot_tables(model, y, spec, truth)
+                decoded = "".join(t.argmax() for t in tables)
+                self.done.emit((tables, truth, decoded))
             except Exception:
                 self.failed.emit(traceback.format_exc(limit=3))
 
@@ -256,8 +347,8 @@ class InspectorWindow(QMainWindow):
         self.tap.currentTextChanged.connect(self._tap_changed)
         self.view = ZoomView()
         self.view.hovered.connect(self.show_pixel)
-        right = QWidget()
-        rv = QVBoxLayout(right)
+        image_tab = QWidget()
+        rv = QVBoxLayout(image_tab)
         top_row = QWidget()
         tr = QHBoxLayout(top_row)
         tr.setContentsMargins(0, 0, 0, 0)
@@ -266,10 +357,37 @@ class InspectorWindow(QMainWindow):
         rv.addWidget(top_row)
         rv.addWidget(self.view, stretch=1)
 
+        # Decoder tab: oracle-mode per-slot likelihood tables for the current frame.
+        self.decode_worker = DecodeWorker(self.pipeline)
+        self.decode_worker.done.connect(self.on_decode)
+        self.decode_worker.failed.connect(self.on_error)
+        decode_tab = QWidget()
+        dv = QVBoxLayout(decode_tab)
+        drow = QWidget()
+        dl = QHBoxLayout(drow)
+        dl.setContentsMargins(0, 0, 0, 0)
+        self.decode_btn = QPushButton("Decode this frame (oracle)")
+        self.decode_btn.setToolTip(
+            "Score every legal character in every slot against the current frame, "
+            "using the current settings as the known nuisances. Green = truth, "
+            "red = wrong argmax. Brightness = posterior probability."
+        )
+        self.decode_btn.clicked.connect(self.run_decode)
+        dl.addWidget(self.decode_btn)
+        self.decode_summary = QLabel("Decode not run.")
+        dl.addWidget(self.decode_summary, stretch=1)
+        dv.addWidget(drow)
+        self.decode_view = ZoomView()
+        dv.addWidget(self.decode_view, stretch=1)
+
+        self.tabs = QTabWidget()
+        self.tabs.addTab(image_tab, "Image")
+        self.tabs.addTab(decode_tab, "Decoder")
+
         root = QWidget()
         rl = QHBoxLayout(root)
         rl.addWidget(scroll)
-        rl.addWidget(right, stretch=1)
+        rl.addWidget(self.tabs, stretch=1)
         self.setCentralWidget(root)
         self.setStatusBar(QStatusBar())
         self.state: dict | None = None
@@ -328,6 +446,33 @@ class InspectorWindow(QMainWindow):
             dist = self.state.get("camera_distance_m")
             extra = f" — camera {dist:.1f} m" if dist else ""
             self.statusBar().showMessage(f"({x}, {y}) = {val}{extra}")
+
+    def run_decode(self) -> None:
+        ov = {k: dict(v) for k, v in self.overrides.items()}
+        surf = ov.get("surface", {})
+        truth = surf.get("plate_string", "ABC1D23")
+        spec_name = surf.get("spec", "mercosur_br_car")
+        noise = ov.get("sensor_noise", {})
+        a = noise.get("shot_gain", 0.0)
+        b = noise.get("read_var", 0.0)
+        seed = int(noise.get("seed", 0))
+        self.decode_summary.setText("decoding… (scoring 7 slots × alphabet)")
+        self.decode_btn.setEnabled(False)
+        self.decode_worker.request(ov, spec_name, truth, a, b, seed)
+
+    def on_decode(self, result) -> None:
+        tables, truth, decoded = result
+        self.decode_btn.setEnabled(True)
+        ok = decoded == truth
+        mean_margin = float(np.mean([t.margin() for t in tables]))
+        min_conf = min(t.top1_posterior() for t in tables)
+        tag = "✓ correct" if ok else f"✗ decoded {decoded}"
+        self.decode_summary.setText(
+            f"truth {truth} — {tag} | mean margin {mean_margin:.2f} nats | "
+            f"weakest slot conf {min_conf:.2f}"
+        )
+        self.decode_view.set_image(decode_heatmap(tables, truth))
+        self.tabs.setCurrentIndex(1)
 
 
 def main() -> None:
