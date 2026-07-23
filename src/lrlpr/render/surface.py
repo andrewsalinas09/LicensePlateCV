@@ -111,7 +111,12 @@ def _build_surface(state: Mapping[str, Any], params: Mapping[str, Any]) -> dict[
     albedo = np.empty((H, W, 3), dtype=np.float64)
     albedo[:] = spec.background_rgb
     if spec.band_height > 0 and params["band"]:
-        albedo[: round(spec.band_height * ppm), :] = spec.band_rgb
+        b0 = round(spec.band_top * ppm)
+        b1 = b0 + round(spec.band_height * ppm)
+        half_gap = (spec.width - spec.band_length) / 2  # band horizontally centered
+        c0 = round(half_gap * ppm)
+        c1 = W - c0
+        albedo[b0:b1, c0:c1] = spec.band_rgb
     painted = height_mm >= params["paint_coverage"] * params["relief_height_mm"]
     paint_w = np.where(painted, np.maximum(char_mask, border_mask), 0.0)[..., None]
     albedo = albedo * (1 - paint_w) + np.asarray(spec.char_rgb) * paint_w
@@ -132,7 +137,8 @@ SURFACE_STAGE = Stage(
     params=(
         ParamSpec("plate_string", "ABC1D23", doc="7-char plate text (layout-validated)"),
         ParamSpec("spec", "mercosur_br_car", choices=tuple(SPECS), doc="plate layout spec"),
-        ParamSpec("font_path", "data/fonts/FE-Engschrift.ttf", doc="TTF for glyphs"),
+        ParamSpec("font_path", "data/fonts/GL-Nummernschild-Eng.ttf",
+                  doc="TTF for glyphs (GL FE-Engschrift digitization)"),
         ParamSpec("px_per_mm", 2.0, lo=0.5, hi=8.0, step=0.5, units="px/mm",
                   doc="supersampled working resolution on the plate plane"),
         ParamSpec("relief_height_mm", 1.2, lo=0.0, hi=3.0, step=0.05, units="mm",

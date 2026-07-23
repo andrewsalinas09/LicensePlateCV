@@ -29,7 +29,8 @@ from lrlpr.pipeline import ParamSpec, Pipeline  # noqa: E402
 from lrlpr.render import build_render_pipeline  # noqa: E402
 
 FALLBACK_FONTS = [
-    os.path.join(os.path.dirname(__file__), "..", "..", "data", "fonts", "FE-Engschrift.ttf"),
+    os.path.join(os.path.dirname(__file__), "..", "..", "data", "fonts",
+                 "GL-Nummernschild-Eng.ttf"),
     r"C:\Windows\Fonts\arialbd.ttf",
 ]
 
