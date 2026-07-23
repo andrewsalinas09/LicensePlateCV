@@ -233,6 +233,19 @@ parameter (lighting scale / tone / dataset sharpening / surround), not random mi
 exactly what channel calibration from a small set of pairs would fix once. Still eyeball-tier
 evidence; Δ with fitted nuisances remains the bar.
 
+Design-02 discussion opened (Andrew): how to account for some nuisances being fixed while
+others vary — e.g. PSF/MTF. Resolved as the **nuisance hierarchy** (design-02 §5b added):
+every nuisance declares a scope (camera-fixed / track / frame / realization); scope = how many
+observations constrain it = pooling strength; treatment follows scope (calibrate-and-plug-in /
+marginalize / EM-search / integrate analytically). Key worked example: "the PSF" decomposes
+across THREE scopes (base MTF camera-fixed, defocus track-derived from distance, motion blur
+frame-directional with kinematic smoothness) — high-dimensional nuisances de-fang by scope
+decomposition. Major consequence: HR frames calibrate camera-fixed parameters that transfer
+directly to LR likelihoods — paired datasets are calibration channels. Frame/band-artwork
+renderer work discussed then deferred by Andrew (band artwork is flat printed film — albedo
+only; frame/screws = 3D via shared-heightmap shadows + two-plane homography parallax — design
+sketched in conversation, not yet in design-01).
+
 Second realization (Andrew): "I don't even need the dataset to test the model — I mean I do,
 but I don't." Formalized: dataset-free = everything where we control ground truth (decoder
 development, ideal-observer bound sweeps, factorization gap, fusion ablations — the method

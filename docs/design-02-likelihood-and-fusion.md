@@ -107,6 +107,33 @@ Two opposing effects:
 - Degenerate case, now formalized: static plate + single encode = no phase diversity AND high
   ρ — both knobs at their worst (the "garbage" FANVID clips).
 
+## 5b. Nuisance hierarchy — scopes (extension, discussed 2026-07-22)
+
+§5's shared/per-frame split generalizes to a declared SCOPE per nuisance:
+
+| Scope | Examples | Constrained by | Treatment |
+|---|---|---|---|
+| Camera-fixed | intrinsics, base optical MTF, noise a/b, ISP, codec config, Bayer phase | every frame the camera produced (incl. plate-free footage; slanted edges anywhere measure the lens) | calibrate once → plug-in point estimate (residual uncertainty sub-threshold by the §4.4 criterion) |
+| Track | illumination, distance regime (→ defocus), speed magnitude, WB state | the track's N frames | marginalize (small grid / Laplace) or EM-estimate with uncertainty propagated |
+| Frame | pose/sub-pixel phase, motion direction, codec block phase | one frame + hierarchical priors (kinematic smoothness ties frames) | the EM loop's real search space |
+| Realization | the noise draw | never estimated | integrated analytically (structured ρ→1 components excepted, §4) |
+
+Worked example (the question that prompted this): "the PSF" is not one nuisance —
+base MTF is CAMERA-FIXED (slanted-edge calibratable, once), defocus is TRACK-derived
+(function of distance, which geometry estimates anyway, plus one camera-fixed focus
+setting), motion blur is FRAME-level in direction but kinematically smooth in magnitude.
+A naively-free per-frame 2D kernel collapses into: a calibrated constant ⊗ a derived
+quantity ⊗ a smoothness-tied sequence. Scope decomposition is the general de-fanging
+move for high-dimensional nuisances.
+
+Consequences: (1) **HR frames calibrate the camera for LR decoding** — same camera, so
+camera-fixed parameters fitted on sharp HR transfer directly into the LR likelihood
+(the paired datasets are calibration channels, not just SR training data); (2) with an
+unknown camera (single wild image) the camera level has no pooling and everything
+degrades gracefully to per-image marginalization with honestly wider posteriors.
+Deferred refinements: field-dependent PSF (camera-fixed function of image position);
+slow drift of "fixed" parameters (temporal prior if residual diagnostics demand).
+
 ## 6. Confidence, calibration, self-audit
 
 - Posterior over strings from forward-backward on the fused trellis (marginals, top-k).
