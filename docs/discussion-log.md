@@ -96,6 +96,30 @@ Andrew signed off on design-01 direction ("looks very good") with additions, all
 
 ---
 
+## 2026-07-22 — Phase 1 first cut landed (renderer [1]-[3] + inspector app)
+
+Design-01 approved by Andrew; design-02 under study (no likelihood code until signed off).
+Implemented per design: Stage/ParamSpec/Pipeline with prefix caching; surface stage
+(EDT-based emboss shoulder, per-cell glyph centering); shading stage (Lambertian + heightfield
+cast shadows, documented light convention); pinhole projection with real units. PySide6
+inspector auto-generates controls from schemas. 16 physics tests.
+
+Tests caught two real bugs before any human saw a render: (1) shadow-march direction derived
+from a zero vector at elevation 90°; (2) focal-mm/focal-px conflation put the camera 13 cm
+from the plate — fixed by adding sensor pixel_pitch_um, camera now lands at physically
+sensible distances (~44 m for 12 px chars with a 25 mm lens). Recorded as evidence the
+test-against-agreed-math protocol earns its keep.
+
+Official CONTRAN spec extracted (Res. 780/2019 / 969/2022 — see plate-spec-sources.md):
+notable corrections vs assumptions — chars 65 mm (not 63), fixed 46 mm cell pitch with
+per-cell centering (font advances must NOT be used), NO border on Mercosur plates, band
+390×30 mm Pantone 286. Relief height is not publicly specified anywhere (1.2 mm industry
+assumption, PROVISIONAL). GL-Nummernschild-Eng (Gutenberg Labo FE-Engschrift digitization,
+free license) adopted as the glyph source. Remaining renderer gaps before HR validation:
+band contents (emblem/BRASIL/flag), QR, "BR" mark, corner rounding, retroreflective lobe.
+
+---
+
 ## 2026-07-22 (later still) — metric clarifications and an early go/no-go quantity
 
 Notes from further discussion. All of this is speculative — none of it is validated, and the
