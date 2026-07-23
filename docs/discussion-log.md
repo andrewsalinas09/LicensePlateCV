@@ -93,3 +93,33 @@ Andrew signed off on design-01 direction ("looks very good") with additions, all
   re-encode chain). Codec stage becomes a cascade of 1..k generations, each with own params;
   generation count is a nuisance; misaligned block grids compound + fingerprint the history.
 - **H.265 first-class** alongside H.264 (common in surveillance).
+
+---
+
+## 2026-07-22 (later still) — metric clarifications and an early go/no-go quantity
+
+Notes from further discussion. All of this is speculative — none of it is validated, and the
+approach may well not work in practice; recorded only so the reasoning isn't lost.
+
+- **Terminology care: the competition's Confidence Gap is not calibration.** It is
+  E[conf | correct] − E[conf | incorrect]. It does not test whether predictions at confidence
+  q are correct with frequency q; two badly miscalibrated systems can share the same gap.
+  When we write about confidence we should keep the two concepts separate and be precise
+  about which one any number refers to.
+- **A Bayesian posterior is calibrated by construction only under its own generating model.**
+  On synthetic data drawn from our own channel, calibration is guaranteed (and therefore
+  uninteresting as evidence). The only interesting question is calibration under a
+  *misspecified/estimated* channel on real data — entirely open, and the known failure mode
+  (confidently wrong under model mismatch, memo §5) cuts exactly against it.
+- **Paired LR/HR tracks as channel-calibration data.** If access to real paired data is ever
+  granted (LRLPR-26 / UFPR-SR-Plates style: LR and HR of the same plate), the pairs could be
+  used to estimate the acquisition channel empirically (registration, blur kernels,
+  photometrics, residual covariance) rather than hand-guessing a camera simulation. A
+  hand-built generic simulator and a data-calibrated channel are very different objects; the
+  latter is the one that might describe real data. This adds a channel-estimation work item
+  to the plan (fits design-01's identifiability table as an additional estimation source).
+- **The earliest meaningful empirical quantity we can measure** on any real paired track:
+  Δ = log p(y | s_true) − log p(y | s_best-wrong) under our fitted channel. If Δ is not
+  reliably positive on real validation tracks, the model is not describing reality and
+  everything downstream is moot. This should be a named milestone experiment (added to
+  design-02 §8) — a cheap, honest kill-test long before any leaderboard thoughts.

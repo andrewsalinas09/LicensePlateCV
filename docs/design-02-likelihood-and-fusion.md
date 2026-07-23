@@ -109,8 +109,13 @@ Two opposing effects:
 
 ## 6. Confidence, calibration, self-audit
 
-- Posterior over strings from forward-backward on the fused trellis (marginals, top-k, and
-  P(top-1 correct) as a true probability — the Confidence Gap metric should follow directly).
+- Posterior over strings from forward-backward on the fused trellis (marginals, top-k).
+- Precision about metrics: the ICPR "Confidence Gap" (E[conf|correct] − E[conf|incorrect]) is
+  NOT calibration — it doesn't test whether confidence-q predictions are right q of the time.
+  A Bayes posterior is exactly calibrated *only under its own generating model* (tautological
+  on our synthetic data; guaranteed by construction). Whether calibration survives channel
+  misspecification on real data is an OPEN question — the §7/memo-§5 failure mode
+  (confidently wrong under mismatch) argues it may not. Claim nothing until measured.
 - Flat posterior = proof of insufficient information (distinct from peaked-but-wrong).
 - Cross-frame consistency test (memo §4.5): per-frame posteriors must scatter consistently
   with their widths (chi-squared); excess disagreement flags forward-model mismatch on the
@@ -135,3 +140,9 @@ registrations it induced (self-confirming). The §6 consistency test is the trip
 4. Chernoff scaling check: log(error) vs N_eff linear?
 5. Collision census: which (character, phase, lighting) pairs actually collide at 2-5 px —
    informs how much diversity a track needs, feeds the ideal-observer bound story.
+6. **Milestone kill-test (first thing to run on any real paired data):** per-track margin
+   Δ = log p(y | s_true) − log p(y | s_best-wrong) under the fitted channel. If Δ is not
+   reliably positive on real validation tracks, the channel model is not describing reality
+   and the approach fails there — find out as early and cheaply as possible. (Paired LR/HR
+   tracks, where available, double as channel-calibration data: registration, empirical blur,
+   photometrics, residual covariance estimated from pairs instead of hand-guessed.)
