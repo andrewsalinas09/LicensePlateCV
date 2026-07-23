@@ -120,6 +120,29 @@ band contents (emblem/BRASIL/flag), QR, "BR" mark, corner rounding, retroreflect
 
 ---
 
+## 2026-07-22 — Camera stages [4]-[11] landed (design-01 chain complete, first pass)
+
+Andrew approved [1]-[3] ("looks decent, some things I may want to tweak") and asked for the
+rest of design-01. Implemented: motion+rolling shutter (row-dependent time via remap,
+midpoint-rule exposure integral, velocity in real units from speed/distance/focal), optics PSF
+(defocus disk ⊗ Gaussian at supersample res), sensor (exact box aperture + Bayer with phase
+choice), heteroscedastic noise at RAW (σ²=aI+b, seeded), demosaic (real cv2 bilinear/VNG/EA;
+pattern-name→cv2-code mapping verified by constant-color round-trip test), ISP (WB, sRGB gamma,
+S-curve, unsharp), delivery resample (kernel = discrete nuisance), codec (REAL libjpeg,
+multi-generation with block-grid misalignment shift). 46 tests total; test-writing caught two
+sign-convention slips in the motion smear direction — conventions now documented in the tests.
+
+Deferred, explicitly: H.264/H.265 via ffmpeg (arrives with the multi-frame track phase;
+per-frame JPEG is the flagged intra-only stand-in), retroreflective lobe, black-level offset,
+lens distortion. GUI now reflects all 11 stages with 15 dynamic image taps.
+
+Visual verification at LRLPR-26-like scale (9 px chars, 40 km/h, 10 ms exposure, q25 ×2
+generations): 15 px motion smear (matches v·T), visible Bayer checkerboard in RAW,
+chroma-blotch demosaic noise, JPEG block grid — qualitatively indistinguishable from real
+degraded surveillance crops. Camera stages await Andrew's vibe pass in the inspector.
+
+---
+
 ## 2026-07-22 (later still) — metric clarifications and an early go/no-go quantity
 
 Notes from further discussion. All of this is speculative — none of it is validated, and the
