@@ -209,7 +209,20 @@ kill-test on real paired tracks with fitted (not hand-tuned) nuisances.
 Next tooling step agreed as valuable: A/B compare in the inspector (load a real crop, flicker
 against the render, difference metrics at native resolution).
 
-Follow-on realization (Andrew): "I don't even need the dataset to test the model — I mean I do,
+Follow-on observation (Andrew): the recreated plate is ARK5I56, not ARK5156 — the Mercosur
+pattern (LLL-D-L-DD) forces position 5 to be a LETTER, so the glyph everyone reads as "1" is
+provably "I". The format prior disambiguated a character without better pixels (and the
+renderer's pattern validator enforced it during recreation). Generalized: plate systems are
+"designed non-adversarial" — (1) class-locked slots eliminate ALL cross-class confusions
+(1/I, 0/O, 5/S, 8/B, 2/Z, 6/G, 7/T never compete in any Mercosur slot; only within-class
+ambiguity survives: E/F, C/G, O/Q; 3/8, 6/8, 5/6), worth far more than the raw 7.4-bit space
+reduction (36⁷→26⁴·10³); (2) FE-Schrift is literally a forgery-impeding design — maximizing
+glyph-pair distinguishability is its design objective, which is the same quantity (pairwise
+KL) our decoder's error rates run on. Consequence for design-02 §8.5: the collision census
+only needs within-class pairs per slot. Consequence for the earlier ARK5156 mentions in this
+log/commits: string corrected to ARK5I56.
+
+Second realization (Andrew): "I don't even need the dataset to test the model — I mean I do,
 but I don't." Formalized: dataset-free = everything where we control ground truth (decoder
 development, ideal-observer bound sweeps, factorization gap, fusion ablations — the method
 computes rather than learns, so no training data enters its construction). Dataset-required =
