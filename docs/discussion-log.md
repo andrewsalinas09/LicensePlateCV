@@ -270,6 +270,21 @@ noise, and **calibration under genuine ambiguity**. Decoder tab added to inspect
 posterior heatmap (truth=green, wrong-argmax=red, brightness=posterior), predicted string, mean
 margin, weakest-slot confidence.
 
+**Leakage audit (Andrew was suspicious E1 was "too easy / degenerate"):** ran adversarial
+checks. (1) predict() is seed-independent (byte-identical across calls) — no seed leakage.
+(2) 20 random plates decoded with CORRECT vs FIXED-WRONG reference string: 20/20 both — no
+reference leakage; the decoder recovers whatever is in the pixels. (3) pure-noise image decodes
+to garbage (TTT3I33), NOT the truth — no answer-peeking. Resolution of "how is there no
+information yet it's not degenerate": a 7 px CHAR-HEIGHT observation is ~3,400 px (~150-480
+px/char), per-pixel SNR ~4.8 → per-char SNR ~100. 7 px is information-RICH; recovery is
+inevitable, not suspicious. Degradation kicks in at real LR scale (2-3 px/char): measured 5px
+98%, 4px 80%, 3px 60% — it IS degenerate there, we just hadn't aimed at that scale. Deeper: E1
+is easy BY DESIGN because the observation comes from the exact same forward model (no glyph/pose/
+blur mismatch) — a pure matched-filter problem; E1 validates machinery only, never realism.
+Caveat found: margin-in-nats is ~13 even on pure noise (scales with pixel count) → poor
+standalone confidence metric; use the normalized posterior (which the calibration test already
+does). Instrumentation TODO: replace/augment margin-in-nats display with posterior.
+
 **First scientific finding (E1):** pure sensor noise barely degrades recognition — even 7 px
 chars recover at 100% under max noise. Recognition only breaks below ~4 px (80% per-slot acc) /
 3 px (60%). And calibration holds tightly there: mean confidence 0.799 vs accuracy 0.802 at
