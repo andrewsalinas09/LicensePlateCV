@@ -169,6 +169,27 @@ Known eyeball-visible gaps to close before HR validation: plate frame/screws, ba
 
 ---
 
+## 2026-07-22 — Andrew observes seed-dominance at LR scale; ensemble view added
+
+Andrew, sweeping `sensor_noise.seed` at ~8 px chars: the LR image changes drastically per seed
+— from closely resembling the real tracks.png LR examples to not resembling them at all.
+Interpretation agreed: at this SNR the noise draw is comparable to the surviving glyph signal,
+so the forward model's prediction is a WIDE DISTRIBUTION over images; each seed is one draw,
+and the real frame is itself one draw. Consequences: (1) never expect any single seed to match
+a specific real frame — the pass criterion is that the real frame looks like it belongs in the
+ensemble; a real frame resembling NO seed would indicate model mismatch; (2) the seed is NOT a
+model parameter — the likelihood integrates over the noise distribution analytically; fitting a
+noise realization would be fitting noise (exception, later: structured/fixed-pattern components
+with ρ→1, which are estimable); (3) this is the visual form of why single frames carry
+millibits of evidence and fusion does the work — the observation distributions of competing
+strings overlap heavily at this scale, and that overlap is what the ideal-observer bound will
+quantify.
+
+Tool added: inspector "seed ensemble 3×3" checkbox — tiles nine seed draws of the current tap
+so the distribution (not one draw) is what the eye calibrates against.
+
+---
+
 ## 2026-07-22 (later still) — metric clarifications and an early go/no-go quantity
 
 Notes from further discussion. All of this is speculative — none of it is validated, and the
