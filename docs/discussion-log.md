@@ -246,6 +246,21 @@ renderer work discussed then deferred by Andrew (band artwork is flat printed fi
 only; frame/screws = 3D via shared-heightmap shadows + two-plane homography parallax — design
 sketched in conversation, not yet in design-01).
 
+Decoder test plan agreed in principle (Andrew: "generate the image, then find the text from
+it — forget the dataset; pure data first; lots of instrumentation; be intelligent about which
+chars blur together"). Formalized as the **oracle ladder**: E0 plumbing proof (zero noise, all
+nuisances known, truth must win with zero residual) → E1 noise-only (Gaussian likelihood exact
+by construction; per-slot argmax IS exact MAP since no coupling; validates machinery against
+theory) → E2 blur/downsample (coupling appears; ink gap ≈ 0.17×char height → at 8 px chars
+neighbors couple beyond ~0.7 px blur radius; horizontal motion blur is the coupling amplifier
+reaching 2-3 cells; coupling bandwidth MEASURED from the forward model per config, feeds
+trellis order k; deliverable = factorization gap vs exact enumeration) → E3 full chain known
+nuisances (race pixel-Gaussian vs DCT likelihood, first calibration curves) → E4 remove
+knowledge one nuisance at a time (measured cost per unknown) → E5 multi-frame (Chernoff, ρ).
+Then real HR, then real LR. Instrumentation: decoder tab in inspector — live per-slot
+likelihood heatmaps, posterior bars, margins, truth marker, reacting to degradation sliders.
+First build = E0+E1 + decoder tab, pending Andrew's go (design-02 gate).
+
 Second realization (Andrew): "I don't even need the dataset to test the model — I mean I do,
 but I don't." Formalized: dataset-free = everything where we control ground truth (decoder
 development, ideal-observer bound sweeps, factorization gap, fusion ablations — the method
