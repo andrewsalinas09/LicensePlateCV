@@ -69,6 +69,20 @@ def to_qimage(arr: np.ndarray) -> QImage:
     return QImage(a8.data, w, h, 3 * w, QImage.Format_RGB888).copy()
 
 
+def tile_ensemble(arrays: list[np.ndarray], cols: int = 3) -> np.ndarray:
+    """Tile equally-shaped draws into a grid with thin separators."""
+    tiles = [a if a.ndim == 3 else np.dstack([a] * 3) for a in arrays]
+    h, w, _ = tiles[0].shape
+    sep = 2
+    rows = (len(tiles) + cols - 1) // cols
+    grid = np.full((rows * h + (rows - 1) * sep, cols * w + (cols - 1) * sep, 3), 0.25)
+    for i, t in enumerate(tiles):
+        r, c = divmod(i, cols)
+        y, x = r * (h + sep), c * (w + sep)
+        grid[y : y + h, x : x + w] = t[:h, :w]
+    return grid
+
+
 class Worker(QThread):
     """Serialized pipeline runner: always computes the latest requested config."""
 
@@ -78,18 +92,30 @@ class Worker(QThread):
     def __init__(self, pipeline: Pipeline):
         super().__init__()
         self.pipeline = pipeline
-        self._pending: dict | None = None
+        self._pending: tuple[dict, str | None] | None = None
 
-    def request(self, overrides: dict) -> None:
-        self._pending = overrides
+    def request(self, overrides: dict, ensemble_tap: str | None = None) -> None:
+        self._pending = (overrides, ensemble_tap)
         if not self.isRunning():
             self.start()
 
     def run(self) -> None:
         while self._pending is not None:
-            job, self._pending = self._pending, None
+            (job, ensemble_tap), self._pending = self._pending, None
             try:
                 state = self.pipeline.run(job)
+                if ensemble_tap:
+                    draws = []
+                    for seed in range(9):
+                        ov = {k: dict(v) for k, v in job.items()}
+                        ov.setdefault("sensor_noise", {})["seed"] = seed
+                        st = self.pipeline.run(ov)
+                        arr = st.get(ensemble_tap)
+                        if isinstance(arr, np.ndarray):
+                            draws.append(np.clip(arr, 0.0, 1.0))
+                    if draws:
+                        state = dict(state)
+                        state["__ensemble__"] = tile_ensemble(draws)
                 self.done.emit(state)
             except Exception:
                 self.failed.emit(traceback.format_exc(limit=3))
@@ -220,12 +246,24 @@ class InspectorWindow(QMainWindow):
         self.tap = QComboBox()
         self.tap.addItems(VIEW_ORDER)
         self.tap.setCurrentText("decoded")
-        self.tap.currentTextChanged.connect(lambda _: self.refresh_view())
+        self.ensemble = QCheckBox("seed ensemble 3×3")
+        self.ensemble.setToolTip(
+            "Tile 9 noise-seed draws of the current tap: the forward model predicts a "
+            "DISTRIBUTION over images, not one image — this shows its spread. A real "
+            "frame should look like it belongs among the draws, not equal any one of them."
+        )
+        self.ensemble.toggled.connect(lambda _: self.debounce.start())
+        self.tap.currentTextChanged.connect(self._tap_changed)
         self.view = ZoomView()
         self.view.hovered.connect(self.show_pixel)
         right = QWidget()
         rv = QVBoxLayout(right)
-        rv.addWidget(self.tap)
+        top_row = QWidget()
+        tr = QHBoxLayout(top_row)
+        tr.setContentsMargins(0, 0, 0, 0)
+        tr.addWidget(self.tap, stretch=1)
+        tr.addWidget(self.ensemble)
+        rv.addWidget(top_row)
         rv.addWidget(self.view, stretch=1)
 
         root = QWidget()
@@ -243,9 +281,16 @@ class InspectorWindow(QMainWindow):
             self.debounce.start()
         return on_change
 
+    def _tap_changed(self, _text: str) -> None:
+        if self.ensemble.isChecked():
+            self.debounce.start()  # ensemble is computed per-tap -> recompute
+        else:
+            self.refresh_view()
+
     def compute(self) -> None:
         self.statusBar().showMessage("computing…")
-        self.worker.request({k: dict(v) for k, v in self.overrides.items()})
+        tap = self.tap.currentText() if self.ensemble.isChecked() else None
+        self.worker.request({k: dict(v) for k, v in self.overrides.items()}, tap)
 
     def on_result(self, state: dict) -> None:
         self.state = state
@@ -266,6 +311,9 @@ class InspectorWindow(QMainWindow):
 
     def refresh_view(self) -> None:
         if self.state is None:
+            return
+        if self.ensemble.isChecked() and "__ensemble__" in self.state:
+            self.view.set_image(to_qimage(self.state["__ensemble__"]))
             return
         key = self.tap.currentText()
         if key in self.state:
