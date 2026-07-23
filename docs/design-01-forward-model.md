@@ -95,9 +95,17 @@ renderer systematically biases every character likelihood under directional ligh
   of the color data — demosaic [8] will invent it, with structured artifacts on high-contrast
   glyph edges (zippering, false color). Modeling this is why we simulate mosaic+demosaic
   instead of pretending the camera captured RGB.
-- Color: PROVISIONAL — skip full spectral simulation; map albedo directly to linear RGB with
-  per-channel WB-inverse gains. Plates are near-achromatic (black/white) so spectral detail is
-  low-leverage (to be verified for colored bands/red plates).
+- **CRITICALITY NOTE (Andrew, 2026-07-22): at our SNR, [6]+[8] are among the most important
+  stages to get exactly right.** We operate at the pixel level; some of the bits of
+  information per frame are literally mosaic structure leaking through into the final image
+  (channel-dependent sampling phase on glyph edges survives demosaic and even downstream
+  resampling as a colored micro-pattern). Getting the mosaic layout, phase, and demosaic
+  arithmetic bit-faithful is not optional polish — it is evidence.
+- **Color: plates are NOT all black/white.** NY (older) plates are yellow-on-blue/yellow
+  fields; Mercosur bands are colored; commercial classes vary. Albedo is per-channel RGB from
+  the start, and WB/CCM in [9] carry real leverage for colored plates. PROVISIONAL: still skip
+  full spectral (wavelength-resolved) simulation — linear-RGB albedo with per-channel gains —
+  revisit only if a colored-plate validation fails.
 
 ## [7] Sensor noise (inserted at the RAW mosaic domain)
 
@@ -137,11 +145,19 @@ renderer systematically biases every character likelihood under directional ligh
 - **JPEG**: 8×8 block DCT, per-coefficient uniform quantization with steps from the quant
   table (READ FROM THE FILE HEADER — known exactly when we have the file). Likelihood
   evaluated natively in this domain (design-02 §2).
-- **H.264/HEVC video**: intra frames ≈ JPEG-like (4×4/8×8 transforms); inter frames predicted
-  from neighbors + quantized residual + in-loop deblocking. Consequences: (a) within-frame
-  correlated artifacts, (b) ACROSS-FRAME correlated noise → the ρ/N_eff machinery of
-  design-02 §4; GOP structure (which frames are I/P/B) is readable from the stream when we
-  have it.
+- **H.264 / H.265 video** (H.265/HEVC is common in modern surveillance — first-class support,
+  not an afterthought): intra frames ≈ JPEG-like (4×4–32×32 transforms; H.265 has larger CTUs
+  and stronger in-loop filtering incl. SAO); inter frames predicted from neighbors + quantized
+  residual + deblocking. Consequences: (a) within-frame correlated artifacts, (b) ACROSS-FRAME
+  correlated noise → the ρ/N_eff machinery of design-02 §4; GOP structure (which frames are
+  I/P/B) is readable from the stream when we have it.
+- **Multi-generation encoding (Andrew, 2026-07-22)**: real evidence is often screenshots of
+  screenshots — e.g. FANVID is a YouTube re-encode of whatever upload pipeline the source went
+  through, possibly with screen capture in between. Model the codec stage as a CASCADE of
+  1..k encode/decode generations, each with its own codec/params (+ possible intermediate
+  resampling). Generation count and per-generation params = discrete/continuous nuisances.
+  Each generation re-quantizes on its own block grid; misaligned grids compound into
+  characteristic artifact patterns (useful: they also fingerprint the processing history).
 
 ## Identifiability table (memo §4.4 discipline)
 
@@ -162,6 +178,10 @@ renderer systematically biases every character likelihood under directional ligh
 ## Implementation requirements (for later phases; listed so design constrains code)
 
 1. Every stage toggleable and parameterized; a "channel config" object fully describes a model.
+   Stages are pure functions `(image, params) -> image` with a declared parameter schema
+   (name, range, units, log/linear scale) — this single architecture serves the library, the
+   ablation toggles, AND the inspection GUI (design-03) which auto-generates its sliders from
+   the same schema.
 2. Supersampled compositional rendering: glyph g in slot j rendered once per (frame nuisance
    set), composed per hypothesis — this is what makes trellis unary/pairwise tables cheap.
 3. Bit-exact replication of known stages (cv2 cubic for FANVID; libjpeg quantization).

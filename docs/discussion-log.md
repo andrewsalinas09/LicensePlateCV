@@ -64,3 +64,32 @@ all the information at low SNR). → design-02 §3.
 consistency test as tripwire); Gaussian-pixel vs DCT-quantization likelihood (both built,
 experiments decide); spatial residual correlation model; how much relief shading matters at
 heavy compression (leverage test).
+
+---
+
+## 2026-07-22 (later) — design-01 review feedback + inspection app requirement
+
+Andrew signed off on design-01 direction ("looks very good") with additions, all incorporated:
+
+- **Inspection GUI is a first-class deliverable** (new design-03): PySide6 app, real-time
+  sliders for every stage parameter, per-stage image taps (incl. RAW mosaic view), A/B
+  compare, scenario presets, track playback. Rationale: vibe-testing the physics by playing
+  with it / trying to break it is how Andrew finds the best stuff; also debugging + shareable
+  walkthrough. Architecture consequence: stages must be pure schema-described functions
+  (library-side), GUI is a thin reflective viewer — no separate "demo physics."
+- **GPU vs CPU question resolved**: for our analytic raster workload it's speed, not quality —
+  Blender's CPU/GPU differences are implementation/feature-parity issues, not inherent physics.
+  Realism lives in sampling density, kernel exactness, model completeness. Plan: CPU NumPy
+  reference (gold standard, unit-tested) → GPU port validated against it in CI; real encoder
+  libraries for all codec stages (never hand-rolled approximations). Mitsuba 3 noted as
+  optional offline ground truth if BRDF-level validation is ever needed.
+- **Bayer/demosaic elevated to critical** (Andrew): at this SNR, part of the per-frame
+  information is literally mosaic structure leaking through — bit-faithful mosaic phase and
+  demosaic arithmetic is evidence, not polish. → design-01 [6] criticality note.
+- **Colored plates**: not all plates are black/white (NY yellow, Mercosur bands) — per-channel
+  RGB albedo from the start; WB/CCM carry real leverage on colored plates. Full spectral
+  simulation still deferred (PROVISIONAL).
+- **Multi-generation encoding**: real evidence is screenshots-of-screenshots (FANVID = YouTube
+  re-encode chain). Codec stage becomes a cascade of 1..k generations, each with own params;
+  generation count is a nuisance; misaligned block grids compound + fingerprint the history.
+- **H.265 first-class** alongside H.264 (common in surveillance).
