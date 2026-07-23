@@ -261,6 +261,22 @@ Then real HR, then real LR. Instrumentation: decoder tab in inspector — live p
 likelihood heatmaps, posterior bars, margins, truth marker, reacting to degradation sliders.
 First build = E0+E1 + decoder tab, pending Andrew's go (design-02 gate).
 
+BUILT (Andrew: "let's go for it"): `lrlpr/decode/` — likelihood.py (Gaussian noise model (a),
+prediction caching since means are seed-independent), slots.py (per-slot format-prior tables:
+only legal chars per slot, conditional-on-reference scoring), rungs.py (E0-E3 oracle configs).
+Tests test_decode_e0_e1.py (8, green): E0 truth has exactly-zero residual + wins every slot +
+reference-independence without coupling; E1 recovery, seed-reproducibility, margins shrink with
+noise, and **calibration under genuine ambiguity**. Decoder tab added to inspector: per-slot
+posterior heatmap (truth=green, wrong-argmax=red, brightness=posterior), predicted string, mean
+margin, weakest-slot confidence.
+
+**First scientific finding (E1):** pure sensor noise barely degrades recognition — even 7 px
+chars recover at 100% under max noise. Recognition only breaks below ~4 px (80% per-slot acc) /
+3 px (60%). And calibration holds tightly there: mean confidence 0.799 vs accuracy 0.802 at
+4 px, 0.584 vs 0.600 at 3 px. Confirms the machinery is calibrated by construction under the
+true model (validates code, not realism) AND that the real degradation driver is coupling/blur,
+not noise — motivating E2 as the next and more important rung.
+
 Second realization (Andrew): "I don't even need the dataset to test the model — I mean I do,
 but I don't." Formalized: dataset-free = everything where we control ground truth (decoder
 development, ideal-observer bound sweeps, factorization gap, fusion ablations — the method
