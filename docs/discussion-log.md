@@ -209,6 +209,16 @@ kill-test on real paired tracks with fitted (not hand-tuned) nuisances.
 Next tooling step agreed as valuable: A/B compare in the inspector (load a real crop, flicker
 against the render, difference metrics at native resolution).
 
+Follow-on realization (Andrew): "I don't even need the dataset to test the model — I mean I do,
+but I don't." Formalized: dataset-free = everything where we control ground truth (decoder
+development, ideal-observer bound sweeps, factorization gap, fusion ablations — the method
+computes rather than learns, so no training data enters its construction). Dataset-required =
+validating that the channel describes reality (Δ test, real-data calibration) — but that role
+needs a small number of paired real examples to fit/check a camera model, not a large training
+corpus. The dataset's role shrinks from prerequisite to validation instrument. (Caveat kept in
+view: synthetic data from our own model can never validate the model — the small real set is
+irreplaceable for that, and none of today's eyeball evidence substitutes for it.)
+
 ---
 
 ## 2026-07-22 (later still) — metric clarifications and an early go/no-go quantity
