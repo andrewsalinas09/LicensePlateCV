@@ -87,11 +87,16 @@ def _project(state: Mapping[str, Any], params: Mapping[str, Any]) -> dict[str, A
         flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
         borderValue=tuple(params["backdrop"] for _ in range(3)),
     )
+    focal_px_super = params["focal_mm"] / (params["pixel_pitch_um"] * 1e-3) * int(
+        params["supersample"]
+    )
     return {
         "image": image,
+        "current": image,  # the working image consumed by downstream camera stages
         "homography": Hmat,
         "supersample": int(params["supersample"]),
         "camera_distance_m": distance_mm / 1000.0,
+        "focal_px_super": focal_px_super,
     }
 
 

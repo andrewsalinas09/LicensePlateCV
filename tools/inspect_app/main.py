@@ -25,8 +25,8 @@ from PySide6.QtWidgets import (
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
+from lrlpr.camera import build_full_pipeline  # noqa: E402
 from lrlpr.pipeline import ParamSpec, Pipeline  # noqa: E402
-from lrlpr.render import build_render_pipeline  # noqa: E402
 
 FALLBACK_FONTS = [
     os.path.join(os.path.dirname(__file__), "..", "..", "data", "fonts",
@@ -34,8 +34,22 @@ FALLBACK_FONTS = [
     r"C:\Windows\Fonts\arialbd.ttf",
 ]
 
-# State keys that are viewable as images, in pipeline order.
-VIEWABLE = ["albedo", "height_mm", "char_mask", "shading", "radiance", "image"]
+# Preferred display order for known taps; unknown image-like keys are appended.
+VIEW_ORDER = [
+    "albedo", "height_mm", "char_mask", "shading", "radiance", "image",
+    "image_motion", "image_optics", "sensor_rgb", "raw_mosaic", "raw_noisy",
+    "demosaiced", "isp_image", "delivered", "decoded",
+]
+
+
+def viewable_keys(state: dict) -> list[str]:
+    def is_img(v) -> bool:
+        return isinstance(v, np.ndarray) and v.ndim in (2, 3) and v.size > 16
+
+    known = [k for k in VIEW_ORDER if is_img(state.get(k))]
+    extra = sorted(k for k, v in state.items() if is_img(v) and k not in VIEW_ORDER
+                   and k != "current")
+    return known + extra
 
 
 def to_qimage(arr: np.ndarray) -> QImage:
@@ -172,8 +186,8 @@ def make_control(spec: ParamSpec, on_change) -> QWidget:
 class InspectorWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("LRLPR Pipeline Inspector — Phase 1: Renderer")
-        self.pipeline = build_render_pipeline()
+        self.setWindowTitle("LRLPR Pipeline Inspector — design-01 stages [1]-[11]")
+        self.pipeline = build_full_pipeline()
         self.overrides: dict[str, dict] = {}
         font = next((f for f in FALLBACK_FONTS if os.path.exists(f)), None)
         if font:
@@ -202,10 +216,10 @@ class InspectorWindow(QMainWindow):
         scroll.setWidgetResizable(True)
         scroll.setMinimumWidth(430)
 
-        # Right: stage-tap selector + zoomable view.
+        # Right: stage-tap selector + zoomable view (repopulated per result).
         self.tap = QComboBox()
-        self.tap.addItems(VIEWABLE)
-        self.tap.setCurrentText("image")
+        self.tap.addItems(VIEW_ORDER)
+        self.tap.setCurrentText("decoded")
         self.tap.currentTextChanged.connect(lambda _: self.refresh_view())
         self.view = ZoomView()
         self.view.hovered.connect(self.show_pixel)
@@ -238,6 +252,13 @@ class InspectorWindow(QMainWindow):
         dist = state.get("camera_distance_m")
         msg = f"ok — camera at {dist:.1f} m" if dist else "ok"
         self.statusBar().showMessage(msg)
+        current = self.tap.currentText()
+        keys = viewable_keys(state)
+        self.tap.blockSignals(True)
+        self.tap.clear()
+        self.tap.addItems(keys)
+        self.tap.setCurrentText(current if current in keys else keys[-1])
+        self.tap.blockSignals(False)
         self.refresh_view()
 
     def on_error(self, tb: str) -> None:
