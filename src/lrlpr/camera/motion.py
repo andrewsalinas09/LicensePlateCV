@@ -71,6 +71,12 @@ def apply_motion_rs(
 
 def _motion(state: Mapping[str, Any], params: Mapping[str, Any]) -> dict[str, Any]:
     img = state["current"]
+    if params["speed_kmh"] == 0.0:
+        # Static scene: displacement is zero for every row and time sample —
+        # the remap/average is exactly the identity. Skipping it takes the
+        # in-model search's pose evaluation from ~21 ms to ~7 ms (profiled
+        # 2026-07-24; this stage dominated the pose loop at speed 0).
+        return {"current": img, "image_motion": img}
     S = state["supersample"]
     v = velocity_px_per_s(
         params["speed_kmh"], params["motion_direction_deg"],

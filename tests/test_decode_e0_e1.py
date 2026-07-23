@@ -27,8 +27,10 @@ TRUTH = "ABC1D23"
 
 
 def _model(rung, **kw):
-    ov, disabled, a, b = rung_config(rung, FONT, plate_string=TRUTH, **kw)
-    return ScoringModel(build_full_pipeline(), ov, frozenset(disabled), a, b), (ov, disabled)
+    rc = rung_config(rung, FONT, plate_string=TRUTH, **kw)
+    model = ScoringModel(build_full_pipeline(), rc.overrides, frozenset(rc.disabled),
+                         rc.a, rc.b, var_scale=rc.var_scale)
+    return model, rc
 
 
 # --------------------------------------------------------------------- E0

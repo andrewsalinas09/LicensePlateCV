@@ -60,6 +60,15 @@ class ScoringModel:
     disabled: frozenset[str] = frozenset()
     a: float = 0.0
     b: float = 0.0
+    # Linear stages AFTER the noise stage transform its variance. For an
+    # integer-factor area downscale k the transform is exact: each output
+    # pixel averages k² independent noise samples, so var_out = (a·ŷ+b)/k²
+    # with outputs still independent — the likelihood stays exact with
+    # var_scale = scale². (Audit finding 2026-07-22: without this, E2-with-
+    # downscale overcounts noise ~5× at scale 0.5.) Non-integer factors are
+    # approximate (neighbor correlation ignored). a/b remain the RAW stage
+    # parameters (observe() needs them); only scoring applies var_scale.
+    var_scale: float = 1.0
     string_stage: str = "surface"
     string_param: str = "plate_string"
     _pred_cache: dict[str, np.ndarray] = field(default_factory=dict, repr=False)
@@ -88,8 +97,10 @@ class ScoringModel:
 
     def score(self, y: np.ndarray, string: str) -> float:
         """log p(y | string) under the Gaussian noise model."""
-        total, _ = gaussian_loglik(y, self.predict(string), self.a, self.b)
+        total, _ = gaussian_loglik(y, self.predict(string),
+                                   self.a * self.var_scale, self.b * self.var_scale)
         return total
 
     def score_map(self, y: np.ndarray, string: str) -> np.ndarray:
-        return gaussian_loglik(y, self.predict(string), self.a, self.b)[1]
+        return gaussian_loglik(y, self.predict(string),
+                               self.a * self.var_scale, self.b * self.var_scale)[1]

@@ -82,6 +82,18 @@ def _project(state: Mapping[str, Any], params: Mapping[str, Any]) -> dict[str, A
     # Compose with mm -> source-px scaling of the rendered plate maps.
     src_scale = np.diag([state["mm_per_px"], state["mm_per_px"], 1.0])
     warp = Hmat @ src_scale
+    if params["grid_warp"] is not None:
+        # Render onto an externally-fitted grid (decoder geometry fitting, G1+):
+        # grid_warp maps NATIVE default-projection px -> native target-grid px;
+        # composing it here means all resampling happens inside the renderer at
+        # supersampled resolution — the observation itself is never resampled.
+        ss = int(params["supersample"])
+        S = np.diag([float(ss), float(ss), 1.0])
+        gw = np.asarray(params["grid_warp"], dtype=np.float64).reshape(3, 3)
+        warp = S @ gw @ np.linalg.inv(S) @ warp
+        gh, gw_px = params["grid_shape"]
+        out_h, out_w = int(gh) * ss, int(gw_px) * ss
+        Hmat = S @ gw @ np.linalg.inv(S) @ Hmat
     image = cv2.warpPerspective(
         state["radiance"], warp, (out_w, out_h),
         flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
@@ -117,6 +129,11 @@ PROJECT_STAGE = Stage(
                   doc="working-grid oversampling vs sensor pixels"),
         ParamSpec("backdrop", 0.35, lo=0.0, hi=1.0, step=0.05,
                   doc="constant radiance behind the plate (placeholder scene)"),
+        ParamSpec("grid_warp", None, hidden=True,
+                  doc="3x3 homography, native default-projection px -> native "
+                      "target-grid px; render onto a fitted observation grid"),
+        ParamSpec("grid_shape", None, hidden=True,
+                  doc="(h, w) native target-grid size, required with grid_warp"),
     ),
     provides=("image", "homography", "supersample"),
     doc="design-01 [3]: pinhole projection of the shaded plate",

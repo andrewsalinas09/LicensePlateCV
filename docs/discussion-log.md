@@ -331,3 +331,288 @@ approach may well not work in practice; recorded only so the reasoning isn't los
   reliably positive on real validation tracks, the model is not describing reality and
   everything downstream is moot. This should be a named milestone experiment (added to
   design-02 §8) — a cheap, honest kill-test long before any leaderboard thoughts.
+
+---
+
+## 2026-07-22 (reference images) — screenshot-of-oracle as the first external input; outside colors carry heavy information
+
+Andrew's observation on the RHB6I06 pair: the colors OUTSIDE the characters — blue band, white
+retroreflective field vs the dark surround — are "giving a ton of info." They are the largest,
+most color-distinct structures in a LR crop, so they anchor localization/registration and
+photometrics (white balance, exposure) *string-independently* — exactly the bootstrap
+structure design-02 §7 wants for initializing registration before any character evidence
+exists. Worth exploiting deliberately rather than incidentally.
+
+Agreed first step toward real inputs (Andrew): **screenshot the oracle** — capture the
+renderer's own output through a display/screenshot channel (display gamma, 8-bit quantization,
+PNG, possibly view rescaling). Same image, but NOT literally identical to the pipeline's linear
+array: the gentlest possible model mismatch, with ground truth still known. Ladder of external
+inputs: oracle screenshot → hand-matched recreation screenshots → real crops (Real.png).
+`ExampleLicensePlateGenerator/RHB6I06/Generated.png` (a screenshot of the render) is the first
+instance.
+
+BUILT (inspector): (1) **Save view PNG** button — saves the displayed (gamma 1/2.2, 8-bit)
+image, making "screenshot the oracle" a one-click reproducible step instead of a manual snip;
+(2) **Reference tab** — load an external image from disk or paste a screenshot from the
+clipboard (Win+Shift+S → Ctrl+V), preloads the RHB6I06 Generated.png, pixel inspector shows
+raw u8 and sRGB-linearized values; the image is stored both display-referred and linearized
+(IEC 61966-2-1 inverse) for future scoring use. NOTE the linearization is approximate for our
+own screenshots (app displays with pure 1/2.2, sRGB inverse is piecewise) — that residual
+mismatch is part of what the oracle-screenshot rung is for. Not yet built (next, "go from
+there"): registering/scoring the loaded reference against the forward model.
+
+---
+
+## 2026-07-23 — First external decode: the screenshot channel is nearly free; unknown nuisances are everything
+
+BUILT: `lrlpr/decode/reference.py` (+ CLI `tools/decode_reference.py`, GUI "Decode reference"
+button, test test_decode_reference.py). Registration = string-independent template match over
+(scale, translation): the template is the forward model's prediction for a NEUTRAL string
+(XXX0X00), so no truth leaks into registration — the "outside colors" doing the localizing.
+Two lessons baked in: (1) normalized SSD (TM_SQDIFF_NORMED) is DEGENERATE under scale search
+(a tiny flat template patch matches any flat region with ~zero error; first run locked onto a
+21×10 dark corner) — zero-mean NCC (TM_CCOEFF_NORMED) + a minimum-coverage constraint fixes
+it; (2) noise floor for scoring is estimated robustly from the registered residual
+(median-of-squares / 0.4549, χ²₁ median) so character-cell mismatch doesn't inflate it.
+Domain note: with ISP srgb_gamma on, pipeline output is display-referred, so sRGB-inverting a
+screenshot lands ≈ back in the prediction's domain (piecewise-vs-2.2 residual, deliberate).
+
+**Result, controlled rung (settings KNOWN — render at defaults, char 8 px, full chain incl.
+JPEG, noise seed 0; screenshot channel = display gamma → 8-bit → nearest zoom 7.8× → border →
+PNG → sRGB-inverse):** registration recovers the view transform almost exactly (zoom 7.767 vs
+true 7.8; offset 19 vs true 18; NCC 0.928, and the char_height sweep's NCC peaks at the true
+8 px), decode is 7/7 slots, Δ = +148 nats. The screenshot channel costs ~nothing when the
+channel is known — machinery validated through a genuinely external image path.
+
+**Result, uncontrolled rung (RHB6I06/Generated.png — Andrew's hand-tuned render, settings NOT
+recorded):** registration still locks (NCC 0.821, char_height ≈ 8 px, zoom 7.83) but decode is
+3/7 (RMB8A86 vs RHB6I06) with high posteriors — CONFIDENTLY WRONG, exactly the design-02 §6
+misspecification failure mode, on the mildest possible real input. Residual shows the
+prediction's chars thinner/sharper than the observation's (lighting/blur/relief hand-tuning
+we didn't reproduce). Δ swings +148 → −126 nats between known and unknown nuisances: first
+direct measurement of the "cost of unknown nuisances" (E4's question) — and it dwarfs the
+screenshot-channel cost. Wrong slots are all within-class neighbors (H→M, 6→8, I→A, 0→8),
+format prior still holding the class structure.
+
+Consequences: (1) settings sidecars — a saved oracle screenshot is only a controlled
+experiment if the config is recorded; Save-view should eventually write the overrides JSON
+next to the PNG (TODO); (2) the GUI loop is now: load reference → tune sliders → Decode
+reference (current settings as channel) → watch Δ; recovering RHB6I06 by re-tuning is the
+natural next exercise, followed by Real.png — where nuisance ESTIMATION (design-02 §7),
+not hand-tuning, is the real answer.
+
+---
+
+## 2026-07-23 — E3 arrived early: the pixel-Gaussian breaks under the full chain at 7 px (Andrew's R→B)
+
+Andrew ran the GUI reference decode on his own snip (RMN6X08, char 7) and got BMN6X08 —
+one slot wrong, R→B, high confidence. Ablation chase (channel stages toggled one at a time,
+then registration removed entirely):
+
+| variant | chain | screenshot channel | registration | result |
+|---|---|---|---|---|
+| loose/tight snips, any zoom/gamma | full | yes | yes | B...... (tight snips: garbage) |
+| E: pipeline output scored directly | full | none | none | **BH.....** |
+| F: E + gamma/8-bit round-trip | full | quantization only | none | B...... |
+| G: E1 chain (no Bayer/ISP/JPEG) | reduced | none | none | **....... perfect** |
+
+So the flip is NOT the screenshot, NOT the snip, NOT registration: it is the ORACLE decode
+failing at char 7 under Bayer+demosaic+ISP+JPEG — the design-02 §2 prediction landing
+exactly ("pixel-domain Gaussian is provably wrong after compression"). Mechanism: the model
+scores y against JPEG(clean mean) with additive Gaussian noise, but the chain is nonlinear —
+JPEG(mean + noise) ≠ JPEG(mean) + noise, demosaic correlates the noise, quantization
+manufactures/deletes evidence below bin width. The residual around truth is structured, and
+at 7 px a neighbor hypothesis (B, more ink) systematically beats truth (R). At 8 px the same
+chain decodes 7/7 — the failure has a scale threshold, as E3 was designed to measure.
+Registration precision is exonerated (E fails with no registration; G succeeds at the same
+7 px). Corollary confirmed at the same time: noise model (a) is fine as long as noise enters
+LAST (E1/G) — consistent with the E2 resample-variance caveat from the design-02 accuracy
+audit (variance must be pushed through any linear stage after noise; nonlinear stages break
+Gaussianity outright).
+
+Consequences: (1) the codec-aware DCT likelihood (§2b) is promoted from "planned comparison"
+to "needed for any full-chain decode below ~8 px" — E3 should be built next in earnest, with
+the demosaic correlation term in scope; (2) multi-frame fusion does NOT rescue a misspecified
+likelihood — scores add, so bias adds too: more frames = exponentially more confident in the
+same wrong answer; fix the per-frame likelihood before fusing (answers Andrew's "5 images
+help exponentially" hope: yes for independent frames under a correct model — copies of one
+frame are ρ=1/N_eff=1 and add nothing; under a wrong model more frames make it worse);
+(3) tight hand-snips additionally break registration (template can't overhang the reference
+edge → scale forced low → garbage) — fix by padding the reference before matching (TODO,
+instrumentation).
+
+Side observation (Andrew, curiosity poke — real data stays deferred): reference-decoding the
+real HR photo (RHB6I06/real_HR.png) fails outright BUT with visibly low confidence — "at
+least it knows it's bad." Recorded as an observation only: a weak posterior on an unmodeled
+input is the §6 "flat = insufficient information" behavior, but honesty under misspecification
+is NOT yet a claimable property (the same day produced confidently-wrong cases at 7 px).
+Decision: no real-data chasing until the ladder reaches it; development continues in order.
+
+---
+
+## 2026-07-23 (later) — E2 built: variance correction verified, coupling measured, ICM decoding
+
+BUILT (continuing the agreed ladder): (1) `ScoringModel.var_scale` — the audit fix made real:
+post-noise linear stages transform the noise variance; for integer-factor area downscale k,
+var_out = (a·ŷ+b)/k² with outputs independent, so the pixel likelihood stays EXACT at E2 with
+var_scale = scale². Verified empirically in tests: measured residual-variance ratio ≈ 0.25 at
+scale 0.5 vs the uncorrected model (would be a ~5× evidence overcount). rung_config now
+returns a RungConfig dataclass carrying it; E3 keeps var_scale = 1 deliberately (no scalar
+fixes a nonlinear chain — it is the control). (2) `decode_icm` promoted into slots.py
+(iterated conditional decode, fixed-point early stop); reference.py now uses it. (3) Coupling
+measured the right way after a wrong first attempt worth recording: comparing a slot's RAW
+scores across reference strings is confounded (other cells' residuals differ by a constant
+per candidate); the clean signal is the WITHIN-SLOT CENTERED table difference, which is
+exactly zero without blur (disjoint support) and large with σ=2 px blur at 8 px chars — the
+first direct measurement of design-02 §3's coupling term. (4) Instrumentation: registration
+now replicate-pads the reference (default 25%) so a tight hand-snip whose crop cuts into the
+backdrop margin still registers (template may overhang the snip edge; regression test locks
+zoom recovery + exact decode on a tight crop); Save-view PNG now writes a settings-sidecar
+JSON (overrides + tap) — a screenshot without its config can never be a controlled experiment
+again. Tests: 59 green.
+
+Next in queue (unchanged): E2 factorization-gap experiment (ICM/trellis-k vs exact enumeration
+on reduced alphabets, coupling bandwidth vs blur/motion), then E3 in earnest = the §2b
+DCT-domain codec-aware likelihood (design pass first — core math).
+
+UX correctness fix after Andrew was misled by the decoder tab: the reference decode's "truth"
+was silently taken from the plate_string SLIDER (render content), so decoding Generated.png
+while the slider still said RMN6X08 displayed RMN6X08 as truth with green cells — reading as
+"it guessed RMN6X08". Truth is now an explicit optional field on the Reference tab; blank =
+unknown → no green/red grading, argmax outlined white, no Δ. Principle: ground truth about an
+external image is an input the user asserts, never inferred from unrelated render state.
+(Clarified in the same exchange: reference decode fits ONLY zoom/position/noise-floor;
+pose/lighting/blur/char-height come from the sliders — §7 remains the missing fitting loop,
+and registration/extraction is measurably the healthy part on this very image.)
+
+---
+
+## 2026-07-24 — The nuisance-cost asymmetry (measured) and the geometric-fit design proposal (G-ladder)
+
+**Measurement that drives the design** (known channel, char 8, E1 chain, same observation):
+exact channel Δ = +2,261 nats (truth wins, 7/7); the SAME image shifted ONE pixel Δ =
+−102,674 (garbage decode); 5% gamma error Δ = +2,072 (still 7/7); shift+gamma ≈ shift.
+Total character evidence ≈ 2.3k nats; one pixel of unmodeled geometry ≈ 100k nats of
+structured error — 45× the entire string. Photometric error of similar "size" is ~free.
+Consequences: (1) answers "the HR image is human-legible, why doesn't truth win?" — the
+likelihood has no invariances; on a real photo EVERY hypothesis including truth sits ~100k
+nats away and the argmax is decided by junk between equally-terrible fits, with high
+posterior because posteriors are RELATIVE (softmax) — absolute misfit (σ̂, §6 chi-squared
+self-audit) is the only "this is garbage" signal; (2) §7's geometric fit must be SUB-PIXEL
+while photometrics can be fit loosely (scalar gain/offset first); (3) human "trivial reading"
+= instinctive nuisance fitting before shape comparison — the eye also uses the characters to
+align, which the decoder must NOT (registration stays string-independent by design).
+
+**Proposal (pending Andrew's go): pull geometric fitting forward, ahead of E3.** G-ladder:
+- G0 (built): coarse scale+translation via zero-mean NCC on a neutral-string template.
+- G1: sub-pixel refinement, similarity → full HOMOGRAPHY (exact geometric family for a
+  planar plate; relief/frame parallax negligible at this rung), ECC/Lucas-Kanade style
+  gradient refinement initialized from G0, fitted on string-independent structure ONLY
+  (character-cell rectangles masked out — slot geometry is known). Decode path: warp the
+  observation once onto the render grid (resampling caveat carried, same as today's extract).
+- G2 (true §7 entry): decompose the fitted homography into project-stage pose params
+  (yaw/pitch/roll/char_height/offsets), then refine IN-MODEL by maximizing the
+  neutral-string likelihood over pose + scalar photometric gain/offset (Nelder-Mead; each
+  iterate re-renders). Candidates then decode with NO observation resampling, and pose
+  uncertainty lives in the model's own parameterization (design-02 §5b frame scope).
+- Validation rungs: synthetic pose perturbations (known yaw/pitch/roll, fit, measure
+  sub-pixel accuracy + Δ recovery) → own screenshots (sidecar-controlled) → real_HR.png
+  with truth RHB6I06 (the visceral target: decoder reads a legible photo because it fitted
+  the pose itself) → Real.png (kill-test preview, §8.6).
+Known risks, stated: ECC divergence on low-texture/JPEG-blocked inputs (G0 init + masks
+mitigate); README-figure compression on real_HR is an unmodeled codec; character-masked
+fitting leaves less texture at extreme LR (band/edges must suffice — the outside-colors bet,
+now load-bearing). E3 (DCT likelihood) queued right after — G-ladder does not replace it.
+
+**G1 BUILT and validated (2026-07-24, "let's test it!").** The milestone test passes: an
+observation rendered at pose (yaw 6, pitch 3, roll 4), snipped through a non-integer 4.3×
+nearest zoom, decoded by a POSE-BLIND model (sliders say zero pose) — 7/7 with Δ > 0
+(test_geometry_g1). All previous scenarios stay green (62 tests). The build surfaced three
+design-level findings, each measured, that reshaped the implementation:
+
+1. **Never resample the observation — render into its frame instead.** Even with the
+   EXACTLY-TRUE warp, perspective-resampling the observation onto the model grid flips
+   characters at small char heights: pixel sampling is not a homography of the sampled
+   image (posed-camera pixel footprints ≠ warped pose-0 footprints; codec blocks live in
+   the posed frame). Implemented as `project.grid_warp/grid_shape` (hidden ParamSpecs): the
+   fitted residual homography composes INTO the renderer at supersampled resolution, and
+   the observation is only ever integer-cropped + area-downscaled. This is G2's principle
+   arriving early, forced by measurement.
+2. **The frame origin is part of the channel.** Rendering candidates on a grid spanning the
+   whole snip (origin shifted vs the template frame) misaligned Bayer phase and JPEG block
+   grids and flipped slots; the scoring grid must coincide with the template frame.
+3. **ECC on blocky screenshot content wanders in a flat basin** — rho 0.98 with px-scale
+   spurious anisotropy/perspective; harmless to extraction, poison to the render path. No
+   string-independent geometric or residual statistic separates basin-wander from real pose
+   (tried and measured: corner deviation, interior displacement, robust-median b,
+   structure/flat RMS ratio — all fail). Resolution: ONE observation (G0 NCC-peak crop),
+   TWO candidate channel models (plain, and ECC-residual grid-rendered), decode under both,
+   select by POSTERIOR PREDICTIVE CORRELATION between final prediction and observation
+   (dimensionless → per-path smoothing biases cancel; truth never consulted). ~2× decode
+   cost, no thresholds.
+
+**real_HR.png (the milestone target): fails UPSTREAM of G1 — coarse registration never
+locks** (NCC 0.35, template partially off-image, σ̂ 0.59 ≈ scoring noise vs noise; the GUI's
+unreliable-registration warning fires correctly). The neutral-template NCC does not survive
+real-photo appearance: dark red car surround vs gray backdrop, white plate FRAME absent from
+the render, real lighting. So the frontier moved from "decode given geometry" (now works,
+synthetically, pose-blind) to "coarse localization under real photometrics" — exactly
+Andrew's outside-colors observation as an algorithm: find the blue band + white field by
+COLOR STRUCTURE, not template correlation; plus a photometric gain/offset fit before/within
+registration (G2's other half). Next session: color-cue G0 for real images, then re-run
+real_HR.
+
+**G2 BUILT — in-model nuisance search (Andrew's directive: "everything is searching and
+matching through the model's parameters. It was designed to be a camera taking a photo at a
+simulator").** `lrlpr/decode/fit.py`: color-structure init (blue band + white field located by
+color statistics — the outside-colors bootstrap, robust where template NCC failed) → coarse
+pose grid, every hypothesis RENDERED and slid via gain/offset-invariant NCC → Nelder-Mead over
+(char_height, yaw, pitch, roll, sub-pixel phase tx/ty via the project grid warp) with the
+photometric gain/offset solved analytically per render on the character-masked region (mask
+from the render's own homography — slot geometry, not glyphs) → existing slot decoder. ECC and
+all image-space geometry surrogates are OFF the primary path (reference.py retained as the
+screenshot-rung instrument). Results: the G1 milestone scenario (posed 6/3/4, display-zoomed
+4.3×, pose-blind model) decodes 7/7 with Δ=+464 THROUGH PURE PARAMETER SEARCH — pose recovered
+(yaw 5.2, roll 3.8), display zoom correctly absorbed into char_height (42.4 ≈ 10·4.3, "camera
+closer") — ~300 renders, 13 s (test_fit_g2 pins it; 63 tests green). **real_HR.png: first
+partial real-photo read — TKR6I06, right four slots (6I06) correct**, sane localization,
+gain 0.55/offset −0.08 fitted. The remaining failure is the three LEFT slots, systematic —
+per the "simulator needs improvement" principle this residual now indicts a specific missing
+nuisance dimension (left-side lighting/shading gradient or the white plate frame, both absent
+from the render), not the machinery. Bug worth recording: scipy Nelder-Mead's default initial
+simplex uses 5%-of-value steps → ZERO-initialized dims (yaw/pitch/tx/ty) got 0.00025 steps and
+were never explored (symptom: fit pinned at yaw=pitch=0, left-half slots flipping from
+uncorrected foreshortening); fixed with an explicit initial simplex.
+
+**GPU go-decision (Andrew, 2026-07-24) + profile.** Design-03's position stands (speed not
+quality; CPU stays the gold standard). Measured before porting: pose-eval was 21 ms of which
+~14 ms was motion_rs running its 16-sample blur AT SPEED 0 — now a true no-op (identity,
+byte-exact; pose-eval 6.7 ms, fit 6.3→2.0 s). String-eval 63 ms (glyph raster + shading
+dominate), decode ~16 s. Hardware: RTX 4070 Ti SUPER 16 GB; torch 2.11 cu128 added as `gpu`
+dependency group. Microbenchmark (batched grid_sample+avg_pool+eltwise vs cv2 loop, B=256):
+warm GPU 8× on the kernel, CPU↔GPU max diff 1.7e-5 — far under the 8-bit floor, confirming
+"same math". The REAL win needs the whole hypothesis loop batched (B,C,H,W tensors end-to-end)
+so per-stage Python overhead amortizes: target decode 16 s → <0.5 s and sweep throughput for
+E2/E3/bound Monte Carlo. Port plan: batch surface via per-slot glyph sprites (= compositional
+rendering, design-01 impl req 2 — same restructuring the trellis tables need, do together);
+shading/ISP elementwise; project = batched grid_sample; sensor = avg_pool + mosaic mask;
+demosaic = conv; JPEG stays REAL libjpeg on CPU at the batch boundary (design-03 §3 —
+artifacts ARE the noise model); standing CI test asserts GPU matches CPU reference within
+tolerance per stage. CPU baseline should be committed before the port starts.
+
+**Andrew's deliberate stress-tests, both failures root-caused same day:** (1) ~6-7 px snip
+decoded 5/7 (A→D, 3→1) — third independent confirmation of the E3 codec-regime finding
+(full chain + pixel Gaussian breaks below ~8 px); not the snip channel (forensics: nearest
+non-integer 11.16× zoom, photometrics ~free). (2) 9 px rolled-plate snip decoded to TOTAL
+garbage (HTR0B00) — qualitatively different signature (all slots wrong, no within-class
+structure) = registration lock-on failure, and the cause was OUR OWN GUARDRAIL: min_cover=0.5
+assumed the snip is mostly plate; his roomy snip (render = 38% of capture, true zoom 5.73×)
+had the true zoom FORBIDDEN → forced 13.5× at ncc 0.27 → scored the wrong pixels. Fix:
+min_cover 0.2 (permissive; zero-mean NCC does the real discrimination) + GUI warns
+"REGISTRATION UNRELIABLE" when ncc < 0.5 (the 0.27-vs-0.90 gap was the visible tell all
+along). Verified: the exact stress scenario (char 9, roll 18°, FULL chain incl. JPEG,
+non-integer 5.73× snip) now decodes 7/7 with Δ = +613 nats — 9 px is comfortably inside the
+working envelope; the codec regime (~≤7 px) remains the real boundary until §2b. Failure
+taxonomy now established for triage: within-class near-misses = likelihood misspecification;
+all-slot garbage = registration; confidently-wrong with good ncc = channel/nuisance mismatch.
+Tests 60 green (roomy-snip regression added).

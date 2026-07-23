@@ -9,6 +9,7 @@ from lrlpr.decode.likelihood import ScoringModel, gaussian_loglik, sse
 from lrlpr.decode.slots import (
     SlotTable,
     alphabet_for_slot,
+    decode_icm,
     decode_independent,
     slot_tables,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "sse",
     "SlotTable",
     "alphabet_for_slot",
+    "decode_icm",
     "decode_independent",
     "slot_tables",
 ]

@@ -1,0 +1,13 @@
+{
+  "overrides": {
+    "surface": {
+      "font_path": "C:\\Users\\andre\\PycharmProjects\\LicensePlateCV\\data\\fonts\\GL-Nummernschild-Eng.ttf"
+    },
+    "project": {
+      "yaw_deg": -36.5,
+      "pitch_deg": 31.0,
+      "char_height_px": 8.0
+    }
+  },
+  "tap": "decoded"
+}

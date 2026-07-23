@@ -16,26 +16,36 @@ import traceback
 
 import numpy as np
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QImage, QPainter, QPixmap
+from PySide6.QtGui import (
+    QGuiApplication, QImage, QKeySequence, QPainter, QPixmap, QShortcut,
+)
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QGraphicsPixmapItem,
-    QGraphicsScene, QGraphicsView, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QPushButton, QScrollArea, QSlider, QSpinBox, QStatusBar,
-    QTabWidget, QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
+    QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QGroupBox, QHBoxLayout,
+    QLabel, QLineEdit, QMainWindow, QPushButton, QScrollArea, QSlider, QSpinBox,
+    QStatusBar, QTabWidget, QVBoxLayout, QWidget,
 )
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from lrlpr.camera import build_full_pipeline  # noqa: E402
 from lrlpr.decode import ScoringModel, slot_tables  # noqa: E402
+from lrlpr.decode.reference import decode_reference  # noqa: E402
 from lrlpr.pipeline import ParamSpec, Pipeline  # noqa: E402
 from lrlpr.plate_spec import SPECS  # noqa: E402
+
+NEUTRAL_STRING = "XXX0X00"  # registration seed; carries no answer information
 
 FALLBACK_FONTS = [
     os.path.join(os.path.dirname(__file__), "..", "..", "data", "fonts",
                  "GL-Nummernschild-Eng.ttf"),
     r"C:\Windows\Fonts\arialbd.ttf",
 ]
+
+# Where saved views / hand-matched recreation pairs live (RHB6I06 etc.).
+EXAMPLES_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "ExampleLicensePlateGenerator")
+)
 
 # Preferred display order for known taps; unknown image-like keys are appended.
 VIEW_ORDER = [
@@ -72,6 +82,33 @@ def to_qimage(arr: np.ndarray) -> QImage:
     return QImage(a8.data, w, h, 3 * w, QImage.Format_RGB888).copy()
 
 
+def u8_to_qimage(a8: np.ndarray) -> QImage:
+    """Display-referred (H,W,3) uint8 -> QImage, no transform applied."""
+    a8 = np.ascontiguousarray(a8)
+    h, w, _ = a8.shape
+    return QImage(a8.data, w, h, 3 * w, QImage.Format_RGB888).copy()
+
+
+def qimage_to_u8(qimg: QImage) -> np.ndarray:
+    """QImage (any format) -> (H,W,3) uint8 RGB array."""
+    img = qimg.convertToFormat(QImage.Format_RGB888)
+    h, w = img.height(), img.width()
+    buf = np.frombuffer(img.constBits(), dtype=np.uint8, count=img.sizeInBytes())
+    return buf.reshape(h, img.bytesPerLine())[:, : w * 3].reshape(h, w, 3).copy()
+
+
+def srgb_u8_to_linear(u8: np.ndarray) -> np.ndarray:
+    """Display-referred 8-bit -> linear reflectance (IEC 61966-2-1), vectorized.
+
+    APPROXIMATE inverse of the capture/display chain: assumes the file is plain
+    sRGB. A screenshot of our own render inverts the app's 1/2.2 display gamma
+    only approximately (sRGB piecewise != pure 2.2) — that mismatch is part of
+    the point: same image, not literally identical.
+    """
+    x = u8.astype(np.float64) / 255.0
+    return np.where(x <= 0.04045, x / 12.92, ((x + 0.055) / 1.055) ** 2.4)
+
+
 def tile_ensemble(arrays: list[np.ndarray], cols: int = 3) -> np.ndarray:
     """Tile equally-shaped draws into a grid with thin separators."""
     tiles = [a if a.ndim == 3 else np.dstack([a] * 3) for a in arrays]
@@ -106,10 +143,12 @@ def _text_pixmap(lines: list[tuple[str, tuple[int, int, int]]], scale: int = 2) 
     return img
 
 
-def decode_heatmap(tables, truth: str) -> QImage:
+def decode_heatmap(tables, truth: str | None) -> QImage:
     """Per-slot posterior heatmap: rows=slots, cells=alphabet, brightness=prob.
 
-    Truth cell outlined green; decoded-argmax cell outlined red when wrong.
+    With truth: truth cell outlined green, wrong argmax outlined red.
+    Without truth (unknown reference): argmax outlined white — no green/red,
+    because the app has no ground truth to judge against.
     """
     from PySide6.QtGui import QColor
 
@@ -135,10 +174,15 @@ def decode_heatmap(tables, truth: str) -> QImage:
             p.fillRect(x, y, cell - 2, cell - 2, QColor(v, v, v))
             p.setPen(QColor(0, 0, 0) if v > 140 else QColor(210, 210, 210))
             p.drawText(x + 6, y + cell - 8, chv)
-            if chv == truth[j]:
-                p.setPen(QColor(60, 220, 60)); p.drawRect(x, y, cell - 2, cell - 2)
-            if chv == amax and amax != truth[j]:
-                p.setPen(QColor(230, 60, 60)); p.drawRect(x, y, cell - 2, cell - 2)
+            if truth is None:
+                if chv == amax:
+                    p.setPen(QColor(235, 235, 235))
+                    p.drawRect(x, y, cell - 2, cell - 2)
+            else:
+                if chv == truth[j]:
+                    p.setPen(QColor(60, 220, 60)); p.drawRect(x, y, cell - 2, cell - 2)
+                if chv == amax and amax != truth[j]:
+                    p.setPen(QColor(230, 60, 60)); p.drawRect(x, y, cell - 2, cell - 2)
     p.end()
     return img
 
@@ -208,6 +252,35 @@ class DecodeWorker(QThread):
                 tables = slot_tables(model, y, spec, truth)
                 decoded = "".join(t.argmax() for t in tables)
                 self.done.emit((tables, truth, decoded))
+            except Exception:
+                self.failed.emit(traceback.format_exc(limit=3))
+
+
+class RefDecodeWorker(QThread):
+    """Decode the loaded reference image under the CURRENT settings as channel."""
+
+    done = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, pipeline: Pipeline):
+        super().__init__()
+        self.pipeline = pipeline
+        self._job = None
+
+    def request(self, overrides, spec_name, truth, ref_linear):
+        self._job = (overrides, spec_name, truth, ref_linear)
+        if not self.isRunning():
+            self.start()
+
+    def run(self):
+        while self._job is not None:
+            (overrides, spec_name, truth, ref_linear), self._job = self._job, None
+            try:
+                spec = SPECS[spec_name]
+                model = ScoringModel(self.pipeline, overrides, frozenset(), 0.0, 0.0)
+                res = decode_reference(model, spec, ref_linear, NEUTRAL_STRING,
+                                       truth=truth)
+                self.done.emit(res)
             except Exception:
                 self.failed.emit(traceback.format_exc(limit=3))
 
@@ -323,6 +396,8 @@ class InspectorWindow(QMainWindow):
             box = QGroupBox(f"[{stage.name}] {stage.doc}")
             bv = QVBoxLayout(box)
             for spec in stage.params:
+                if spec.hidden:
+                    continue
                 if spec.name == "font_path" and font:
                     spec = ParamSpec(**{**spec.__dict__, "default": os.path.abspath(font)})
                 bv.addWidget(make_control(spec, self._changer(stage.name)))
@@ -354,6 +429,14 @@ class InspectorWindow(QMainWindow):
         tr.setContentsMargins(0, 0, 0, 0)
         tr.addWidget(self.tap, stretch=1)
         tr.addWidget(self.ensemble)
+        self.save_btn = QPushButton("Save view PNG…")
+        self.save_btn.setToolTip(
+            "Save the DISPLAYED image (gamma 1/2.2, 8-bit) as PNG — the reproducible "
+            "'screenshot of the oracle': same image, not literally identical to the "
+            "linear pipeline array. Load it back in the Reference tab."
+        )
+        self.save_btn.clicked.connect(self.save_view)
+        tr.addWidget(self.save_btn)
         rv.addWidget(top_row)
         rv.addWidget(self.view, stretch=1)
 
@@ -379,9 +462,64 @@ class InspectorWindow(QMainWindow):
         dv.addWidget(drow)
         self.decode_view = ZoomView()
         dv.addWidget(self.decode_view, stretch=1)
+        self.decode_tab = decode_tab
+
+        # Reference tab: load an external image (screenshot of the oracle first,
+        # real crops next) to compare against the forward model.
+        ref_tab = QWidget()
+        fv = QVBoxLayout(ref_tab)
+        frow = QWidget()
+        fl = QHBoxLayout(frow)
+        fl.setContentsMargins(0, 0, 0, 0)
+        load_btn = QPushButton("Load image…")
+        load_btn.setToolTip("Load a reference image (screenshot, real crop) from disk.")
+        load_btn.clicked.connect(self.load_reference)
+        fl.addWidget(load_btn)
+        paste_btn = QPushButton("Paste screenshot")
+        paste_btn.setToolTip(
+            "Load the clipboard image (Win+Shift+S snip, then paste here). Ctrl+V "
+            "also works while this tab is focused."
+        )
+        paste_btn.clicked.connect(self.paste_reference)
+        fl.addWidget(paste_btn)
+        self.ref_truth = QLineEdit()
+        self.ref_truth.setPlaceholderText("truth (optional)")
+        self.ref_truth.setMaximumWidth(110)
+        self.ref_truth.setToolTip(
+            "The reference image's KNOWN true plate string, if you have it — used "
+            "only to grade the decode (green/red cells, Δ). Leave blank when "
+            "unknown: the decode runs the same, graded against nothing. This is "
+            "deliberately NOT the plate_string slider — that is render content, "
+            "not ground truth about a loaded image."
+        )
+        fl.addWidget(self.ref_truth)
+        self.ref_decode_btn = QPushButton("Decode reference")
+        self.ref_decode_btn.setToolTip(
+            "Register the loaded reference against the forward model (neutral-string "
+            "template — no truth leaks into registration or decoding), then decode "
+            "it using the CURRENT slider settings as the known channel. Only zoom, "
+            "position, and the noise floor are estimated from the image — pose, "
+            "lighting, blur etc. are TAKEN FROM THE SLIDERS, not fitted."
+        )
+        self.ref_decode_btn.clicked.connect(self.run_ref_decode)
+        fl.addWidget(self.ref_decode_btn)
+        self.ref_info = QLabel("No reference loaded.")
+        fl.addWidget(self.ref_info, stretch=1)
+        fv.addWidget(frow)
+        self.ref_view = ZoomView()
+        self.ref_view.hovered.connect(self.show_ref_pixel)
+        fv.addWidget(self.ref_view, stretch=1)
+        self.ref_tab = ref_tab
+        self.ref_worker = RefDecodeWorker(self.pipeline)
+        self.ref_worker.done.connect(self.on_ref_decode)
+        self.ref_worker.failed.connect(self.on_ref_decode_failed)
+        paste_sc = QShortcut(QKeySequence.StandardKey.Paste, ref_tab)
+        paste_sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        paste_sc.activated.connect(self.paste_reference)
 
         self.tabs = QTabWidget()
         self.tabs.addTab(image_tab, "Image")
+        self.tabs.addTab(ref_tab, "Reference")
         self.tabs.addTab(decode_tab, "Decoder")
 
         root = QWidget()
@@ -391,6 +529,12 @@ class InspectorWindow(QMainWindow):
         self.setCentralWidget(root)
         self.setStatusBar(QStatusBar())
         self.state: dict | None = None
+        self.reference_u8: np.ndarray | None = None
+        self.reference_linear: np.ndarray | None = None
+        self.reference_source: str | None = None
+        default_ref = os.path.join(EXAMPLES_DIR, "RHB6I06", "Generated.png")
+        if os.path.exists(default_ref):
+            self._set_reference(QImage(default_ref), default_ref, focus=False)
         self.compute()
 
     def _changer(self, stage: str):
@@ -472,7 +616,107 @@ class InspectorWindow(QMainWindow):
             f"weakest slot conf {min_conf:.2f}"
         )
         self.decode_view.set_image(decode_heatmap(tables, truth))
-        self.tabs.setCurrentIndex(1)
+        self.tabs.setCurrentWidget(self.decode_tab)
+
+    # ------------------------------------------------------------- reference
+
+    def save_view(self) -> None:
+        """Save the displayed (gamma-mapped 8-bit) view — the oracle screenshot."""
+        if self.state is None:
+            return
+        key = self.tap.currentText()
+        if self.ensemble.isChecked() and "__ensemble__" in self.state:
+            arr, key = self.state["__ensemble__"], f"{key}_ensemble"
+        else:
+            arr = self.state.get(key)
+        if arr is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save displayed view", os.path.join(EXAMPLES_DIR, f"{key}.png"),
+            "PNG (*.png)")
+        if path:
+            to_qimage(arr).save(path)
+            # Settings sidecar: a screenshot without its config can never be a
+            # controlled experiment again (RHB6I06 lesson, log 2026-07-23).
+            import json
+            sidecar = os.path.splitext(path)[0] + ".json"
+            with open(sidecar, "w", encoding="utf-8") as f:
+                json.dump({"overrides": self.overrides, "tap": key}, f, indent=2)
+            self.statusBar().showMessage(f"saved {path} (+ settings sidecar)")
+
+    def load_reference(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load reference image", EXAMPLES_DIR,
+            "Images (*.png *.jpg *.jpeg *.bmp *.webp)")
+        if path:
+            self._set_reference(QImage(path), path)
+
+    def paste_reference(self) -> None:
+        img = QGuiApplication.clipboard().image()
+        if img.isNull():
+            self.statusBar().showMessage("clipboard has no image (Win+Shift+S to snip one)")
+            return
+        self._set_reference(img, "clipboard")
+
+    def _set_reference(self, qimg: QImage, source: str, focus: bool = True) -> None:
+        if qimg.isNull():
+            self.statusBar().showMessage(f"could not load image: {source}")
+            return
+        u8 = qimage_to_u8(qimg)
+        self.reference_u8 = u8
+        self.reference_linear = srgb_u8_to_linear(u8)
+        self.reference_source = source
+        h, w, _ = u8.shape
+        name = source if source == "clipboard" else os.path.basename(source)
+        self.ref_info.setText(f"{name} — {w}×{h} px (raw u8 + sRGB→linear stored)")
+        self.ref_view.set_image(u8_to_qimage(u8))
+        if focus:
+            self.tabs.setCurrentWidget(self.ref_tab)
+
+    def show_ref_pixel(self, x: int, y: int) -> None:
+        if self.reference_u8 is None:
+            return
+        h, w, _ = self.reference_u8.shape
+        if 0 <= y < h and 0 <= x < w:
+            u8 = self.reference_u8[y, x]
+            lin = np.round(self.reference_linear[y, x], 4)
+            self.statusBar().showMessage(f"ref ({x}, {y}) = {u8} u8 | linear {lin}")
+
+    def run_ref_decode(self) -> None:
+        if self.reference_linear is None:
+            self.statusBar().showMessage("load or paste a reference image first")
+            return
+        ov = {k: dict(v) for k, v in self.overrides.items()}
+        surf = ov.get("surface", {})
+        truth = self.ref_truth.text().strip().upper() or None
+        spec_name = surf.get("spec", "mercosur_br_car")
+        self.ref_decode_btn.setEnabled(False)
+        self.statusBar().showMessage(
+            "decoding reference… (registering, then scoring 7 slots × alphabet)")
+        self.ref_worker.request(ov, spec_name, truth, self.reference_linear)
+
+    def on_ref_decode(self, res) -> None:
+        self.ref_decode_btn.setEnabled(True)
+        reg = res.registration
+        warn = "  ⚠ REGISTRATION UNRELIABLE (low ncc) — decode is meaningless" \
+            if reg.score < 0.5 else ""
+        common = (f"zoom {reg.scale:.2f}, ncc {reg.score:.3f} | "
+                  f"σ̂ {res.b_hat ** 0.5:.4f}{warn}")
+        if res.truth is None:
+            self.decode_summary.setText(
+                f"REFERENCE (truth unknown) — decoded {res.decoded} | {common}")
+        else:
+            ok = res.decoded == res.truth
+            tag = "✓ correct" if ok else f"✗ decoded {res.decoded}"
+            self.decode_summary.setText(
+                f"REFERENCE truth {res.truth} — {tag} | "
+                f"Δ {res.delta_nats:+.1f} nats | {common}")
+        self.decode_view.set_image(decode_heatmap(res.tables, res.truth))
+        self.tabs.setCurrentWidget(self.decode_tab)
+
+    def on_ref_decode_failed(self, tb: str) -> None:
+        self.ref_decode_btn.setEnabled(True)
+        self.on_error(tb)
 
 
 def main() -> None:

@@ -77,3 +77,22 @@ def decode_independent(
     """Per-slot argmax decode (exact MAP when slots don't couple; E0/E1)."""
     tables = slot_tables(scoring, y, spec, ref_string)
     return "".join(t.argmax() for t in tables), tables
+
+
+def decode_icm(
+    scoring: ScoringModel, y: np.ndarray, spec: PlateSpec, ref_string: str,
+    passes: int = 3,
+) -> tuple[str, list[SlotTable]]:
+    """Iterated conditional decode: re-condition each pass on the previous
+    estimate. Coincides with decode_independent when slots don't couple (E0/E1);
+    at E2+ this is the cheap approximation whose gap vs exact joint decoding is
+    the measured factorization gap (design-02 §3). Stops early on a fixed point.
+    """
+    ref = spec.validate_string(ref_string)
+    tables: list[SlotTable] = []
+    for _ in range(max(1, passes)):
+        decoded, tables = decode_independent(scoring, y, spec, ref)
+        if decoded == ref:
+            break
+        ref = decoded
+    return ref, tables

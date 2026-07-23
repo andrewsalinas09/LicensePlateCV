@@ -32,6 +32,7 @@ class ParamSpec:
     units: str = ""
     choices: tuple[str, ...] | None = None  # discrete options (combo box)
     doc: str = ""
+    hidden: bool = False  # library-only param (e.g. fitted matrices) — no GUI control
 
     def validate(self, value: Any) -> Any:
         if self.choices is not None and value not in self.choices:
@@ -80,6 +81,8 @@ def _freeze(value: Any) -> Any:
         return tuple(sorted((k, _freeze(v)) for k, v in value.items()))
     if isinstance(value, (list, tuple)):
         return tuple(_freeze(v) for v in value)
+    if hasattr(value, "tobytes") and hasattr(value, "shape"):  # ndarray
+        return ("ndarray", tuple(value.shape), value.tobytes())
     return value
 
 
