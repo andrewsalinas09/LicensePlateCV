@@ -190,6 +190,27 @@ so the distribution (not one draw) is what the eye calibrates against.
 
 ---
 
+## 2026-07-22 — Same-string hand recreation of a real LR example (ARK5156)
+
+Andrew hand-tuned the full pipeline to recreate the real ARK5156 LR example from the LRLPR-26
+README figure — same string, hand-estimated pose — and the per-character blob structure matches
+closely (which pixels darken, how each glyph dissolves, band position, grouping rhythm). Pair
+committed in `ExampleLicensePlateGenerator/` (real from the public README figure; generated).
+
+Honest quantitative residual (matched-scale comparison): real has ~2× plate-region contrast
+(std 0.252 vs 0.117) and ~3× gradient energy, plus a warm color cast (red car body + WB) and a
+car-body surround our flat backdrop lacks. Interpretation: the remaining mismatch is
+PHOTOMETRIC (lighting scale, WB, tone, surround), not structural — and photometrics are
+exactly what the planned nuisance-estimation loop fits automatically. Kept humble: this is one
+hand-picked example, matched by the person who chose the parameters; it demonstrates
+feasibility of manual channel matching, nothing more. The rigorous version remains the Δ
+kill-test on real paired tracks with fitted (not hand-tuned) nuisances.
+
+Next tooling step agreed as valuable: A/B compare in the inspector (load a real crop, flicker
+against the render, difference metrics at native resolution).
+
+---
+
 ## 2026-07-22 (later still) — metric clarifications and an early go/no-go quantity
 
 Notes from further discussion. All of this is speculative — none of it is validated, and the
