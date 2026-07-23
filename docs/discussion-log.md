@@ -143,6 +143,32 @@ degraded surveillance crops. Camera stages await Andrew's vibe pass in the inspe
 
 ---
 
+## 2026-07-22 — Distance-knob clarification + first eyeball match against real data
+
+Question resolved: distance = `project.char_height_px` (camera distance derived from it, shown
+live); `supersample` is computation accuracy only — verified invariant (S=4 vs S=8: ~0.006 mean
+diff). What co-varies with distance automatically: motion blur px and RS shear (∝1/d, derived).
+What deliberately doesn't: optics PSF in sensor px, per-pixel noise, codec quality (camera
+properties, not distance properties — the information loss from distance is purely scale).
+
+First smoke test exposed an unrealistic default: 8 ms exposure at 25 m gave a physically
+correct 18 px smear that real daylight footage doesn't show — daylight surveillance exposures
+are 1–4 ms. Recipe updated (2 ms, 15 km/h).
+
+**Milestone (kept humble):** Andrew ran the HR→LR test himself in the inspector — tuned the
+render to match a real LRLPR-26 HR example, then moved ONLY the distance knob — and found the
+result "very close" to the corresponding real LR appearance (pose hand-estimated, so not
+exact). This is an eyeball-level validation only: it says the forward model produces the right
+CHARACTER of degradation, not that it's likelihood-grade accurate. The real bar remains the Δ
+kill-test (design-02 §8.6). Noted connection: hand-tuning pose until the render matches IS one
+manual iteration of the design-02 nuisance-estimation loop — the decoder automates exactly
+this, scored by likelihood instead of eyeball, jointly over all candidate strings.
+
+Known eyeball-visible gaps to close before HR validation: plate frame/screws, band artwork
+(emblem/BRASIL/flag), WB color cast, H.264 (JPEG stand-in until multi-frame phase).
+
+---
+
 ## 2026-07-22 (later still) — metric clarifications and an early go/no-go quantity
 
 Notes from further discussion. All of this is speculative — none of it is validated, and the
