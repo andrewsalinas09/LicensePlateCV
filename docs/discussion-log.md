@@ -222,6 +222,17 @@ KL) our decoder's error rates run on. Consequence for design-02 §8.5: the colli
 only needs within-class pairs per slot. Consequence for the earlier ARK5156 mentions in this
 log/commits: string corrected to ARK5I56.
 
+Second recreation pair added (Andrew): RHB6I06 (again a position-5 "1"→I correction via the
+format pattern), this time with the HR reference screenshot — a same-plate HR/LR/generated
+triple in `ExampleLicensePlateGenerator/RHB6I06/`. Glyph-blob morphology visibly closer than
+the first pair. Key finding: the quantitative residual has the SAME signature as pair 1 —
+generated is flatter (contrast 0.139 vs 0.229) and cooler than real (both real examples: dark
+red car surrounds; part of the gradient gap is a resolution confound in the saved PNG). A
+systematic residual across independent hand-matches indicates an uncalibrated global channel
+parameter (lighting scale / tone / dataset sharpening / surround), not random mismatch —
+exactly what channel calibration from a small set of pairs would fix once. Still eyeball-tier
+evidence; Δ with fitted nuisances remains the bar.
+
 Second realization (Andrew): "I don't even need the dataset to test the model — I mean I do,
 but I don't." Formalized: dataset-free = everything where we control ground truth (decoder
 development, ideal-observer bound sweeps, factorization gap, fusion ablations — the method
