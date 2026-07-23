@@ -39,7 +39,9 @@ def log_row(path, row):
 
 
 YDL_OPTS = {
-    "format": "bestvideo[ext=mp4][vcodec!*=av01]+bestaudio[ext=m4a]/bestvideo[ext=mp4][vcodec!*=av01]",
+    # Video-only (no +bestaudio as in the original script): frames are all we
+    # need, and merging separate audio/video streams would require ffmpeg.
+    "format": "bestvideo[ext=mp4][vcodec!*=av01]/best[ext=mp4]",
     "outtmpl": os.path.join(VIDEO_TMP, "%(id)s.%(ext)s"),
     "quiet": True,
     "no_warnings": True,

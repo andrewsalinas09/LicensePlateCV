@@ -18,6 +18,9 @@ dev = [
     "ruff>=0.8",
     "ipython>=8.0",
 ]
+tools = [
+    "pyside6>=6.11.1",
+]
 
 [build-system]
 requires = ["hatchling"]
